@@ -19,7 +19,7 @@ def step_learning_rate_decay(init_lr, global_step,
     return init_lr * anneal_rate ** (global_step // anneal_interval)
 
 
-def cyclic_cosine_annealing(init_lr, global_step, T, M):
+def cyclic_cosine_annealing(min_lr, max_lr, global_step, T, M):
     """Cyclic cosine annealing
 
     https://arxiv.org/pdf/1704.00109.pdf
@@ -33,9 +33,10 @@ def cyclic_cosine_annealing(init_lr, global_step, T, M):
     Returns:
         float: Annealed learning rate
     """
-    TdivM = T // M
-    return init_lr / 2.0 * (np.cos(np.pi * ((global_step - 1) % TdivM) / TdivM) + 1.0)
 
+    
+    TdivM = T // M
+    return min_lr + (max_lr - min_lr) / 2.0 * (np.cos(np.pi * ((global_step) % TdivM) / TdivM) + 1.0)
 
 def test_noam():
     lr = 1e-3

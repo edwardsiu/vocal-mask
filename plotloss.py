@@ -8,6 +8,7 @@ options:
 import torch
 from docopt import docopt
 import platform
+import numpy as np
 
 import matplotlib
 if platform.system() == 'Darwin':
@@ -34,15 +35,24 @@ def load_checkpoint(path):
 def thin_losses(losses, factor):
     return [i for i in losses if i[0]%factor == 0]
 
+def avg_losses(losses, window):
+    stop = len(losses)-window
+    loss_vals = [l[1] for l in losses]
+    return [(i, np.nanmean(loss_vals[i:i+window])) for i in range(0, stop, window)]
+
 def plot_loss(train_losses, valid_losses):
     plt.figure()
     plt.title("Binary Cross Entropy Loss")
-    train_losses = thin_losses(train_losses, 10)
-    valid_losses = thin_losses(valid_losses, 10)
+    train_losses = avg_losses(train_losses, 1000)
+    valid_losses = avg_losses(valid_losses, 1000)
     trainX, trainY = zip(*train_losses)
     validX, validY = zip(*valid_losses)
-    plt.plot(trainX, trainY, label="Training", linewidth=0.5)
-    plt.plot(validX, validY, label="Validation", linewidth=0.5)
+    plt.plot(trainX, trainY, label="Training", linewidth=1.0)
+    plt.plot(validX, validY, label="Validation", linewidth=1.0)
+    tlow = np.min(trainY)
+    vlow = np.min(validY)
+    plt.plot((0,30800),(tlow,tlow),label="Train Min", linewidth=0.5)
+    plt.plot((0,30800),(vlow,vlow),label="Valid Min", linewidth=0.5)
     plt.xlabel("Iterations")
     plt.ylabel("Loss")
     plt.legend()

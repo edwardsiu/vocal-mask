@@ -1,10 +1,7 @@
-"""Training Vocal-Mask model
-
-usage: train.py [options] <data-root>
-
-options:
-    -h, --help                  Show this help message and exit
+"""Usage:
+    lr_find.py [-h] <dataroot> <minlr> <maxlr>
 """
+
 from docopt import docopt
 
 import os
@@ -32,37 +29,33 @@ from dataset import basic_collate, SpectrogramDataset
 from hparams import hparams as hp
 from lrschedule import noam_learning_rate_decay, step_learning_rate_decay
 
-global_step = 0
-global_epoch = 0
-global_test_step = 0
 use_cuda = torch.cuda.is_available()
 
-def train_loop(device, model, trainloader, optimizer):
+def train_loop(device, model, trainloader, optimizer, min_lr, max_lr):
     """Main training loop.
 
     """
+    #criterion = torch.nn.MSELoss()
     criterion = torch.nn.BCELoss()
 
-    global global_step, global_epoch, global_test_step
+    global_step = 0
     train_losses = []
     model.train()
-    min_lr = -6
-    max_lr = 0
-    n_iters = 200
+    n_iters = 100
     lrs = np.logspace(min_lr, max_lr, n_iters)
     for i, (x, y) in enumerate(tqdm(trainloader)):
         x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
         y_pred = model(x)
         loss = criterion(y_pred, y)
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = lrs[i]
 
-        optimizer.zero_grad()
         loss.backward()
 
         # clip gradient norm
-        nn.utils.clip_grad_norm_(model.parameters(), hp.grad_norm)
+        #nn.utils.clip_grad_norm_(model.parameters(), hp.grad_norm)
         optimizer.step()
 
         global_step += 1
@@ -74,7 +67,10 @@ def train_loop(device, model, trainloader, optimizer):
 if __name__=="__main__":
     args = docopt(__doc__)
     #print("Command line args:\n", args)
-    data_root = args["<data-root>"]
+    data_root = args["<dataroot>"]
+    min_lr = int(args["<minlr>"][1:-1])
+    max_lr = int(args["<maxlr>"][1:-1])
+    
 
     # make dirs, load dataloader and set up device
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -83,11 +79,18 @@ if __name__=="__main__":
 
     # build model, create optimizer
     model = build_model().to(device)
-    optimizer = AdamW(model.parameters(),
-                           lr=hp.initial_learning_rate, betas=(
-        hp.adam_beta1, hp.adam_beta2),
-        eps=hp.adam_eps, weight_decay=hp.weight_decay,
-        amsgrad=hp.amsgrad)
+    if hp.optimizer == 'adam':
+        optimizer = AdamW(model.parameters(),
+                          lr=hp.initial_learning_rate, betas=(
+                              hp.adam_beta1, hp.adam_beta2),
+                          eps=hp.adam_eps, weight_decay=hp.weight_decay,
+                          amsgrad=hp.amsgrad)
+    else:
+        optimizer = optim.SGD(model.parameters(), 
+                              lr=hp.initial_learning_rate, 
+                              momentum=hp.momentum, 
+                              weight_decay=hp.weight_decay, 
+                              nesterov=hp.nesterov)
 
 
     # create dataloaders
@@ -95,12 +98,12 @@ if __name__=="__main__":
         spec_info = pickle.load(f)
     train_specs = spec_info
     trainset = SpectrogramDataset(data_root, train_specs)
-    trainloader = DataLoader(trainset, collate_fn=basic_collate, shuffle=True, num_workers=6, batch_size=32)
+    trainloader = DataLoader(trainset, collate_fn=basic_collate, shuffle=True, num_workers=6, batch_size=hp.batch_size)
 
 
     # main train loop
     try:
-        losses = train_loop(device, model, trainloader, optimizer)
+        losses = train_loop(device, model, trainloader, optimizer, min_lr, max_lr)
     except KeyboardInterrupt:
         print("Interrupted!")
         pass

@@ -31,7 +31,7 @@ from audio import *
 from model import build_model
 from dataset import basic_collate, SpectrogramDataset
 from hparams import hparams as hp
-from lrschedule import noam_learning_rate_decay, step_learning_rate_decay
+from lrschedule import noam_learning_rate_decay, step_learning_rate_decay, cyclic_cosine_annealing
 import discordhook
 
 global_step = 0
@@ -86,6 +86,8 @@ def load_checkpoint(path, model, optimizer, reset_optimizer):
             optimizer.load_state_dict(checkpoint["optimizer"])
     global_step = checkpoint["global_step"]
     global_epoch = checkpoint["global_epoch"]
+    #global_step = 0
+    #global_epoch = 0
     global_test_step = checkpoint.get("global_test_step", 0)
     train_losses = checkpoint["train_losses"]
     valid_losses = checkpoint["valid_losses"]
@@ -104,7 +106,7 @@ def test_save_checkpoint():
     model = load_checkpoint(checkpoint_path+"checkpoint_step000000000.pth", model, optimizer, False)
 
 
-def evaluate_model(device, model, path, checkpoint_dir, global_epoch):
+def evaluate_model(device, model, path, checkpoint_dir, global_step):
     """evaluate model by generating sample spectrograms
 
     """
@@ -114,14 +116,19 @@ def evaluate_model(device, model, path, checkpoint_dir, global_epoch):
     files = os.listdir(mix_path)
     random.shuffle(files)
     print("Evaluating model...")
+    paths = []
     for f in tqdm(files[:hp.num_evals]):
-        mix_wav = load_wav(os.path.join(mix_path, f))
+        mix_wav = load_wav(os.path.join(mix_path,f))
         vox_wav = load_wav(os.path.join(vox_path,f))
         S = model.generate_specs(device, mix_wav)
-        mix_spec = spectrogram(mix_wav, power=hp.mix_power_factor)[0]
-        vox_spec = spectrogram(vox_wav, power=hp.vox_power_factor)[0]
+        Smix = S['stft']
+        Svox = stft(vox_wav)
+        mix_spec = scaled_mel_weight(Smix, 1, True)
+        vox_spec = scaled_mel_weight(Svox, 1, True)
+        ideal_mask = make_vocal_mask(Smix, Svox)
         file_id = f.split(".")[0]
-        fig_path = os.path.join(checkpoint_dir, 'eval', f'epoch_{global_epoch:06d}_vox_spec_{file_id}.png')
+        fig_path = os.path.join(checkpoint_dir, 'eval', f'step_{global_step:06d}_vox_spec_{file_id}.png')
+        paths.append(fig_path)
         plt.figure()
         plt.subplot(221)
         plt.title("Mixture")
@@ -133,15 +140,16 @@ def evaluate_model(device, model, path, checkpoint_dir, global_epoch):
 
         plt.subplot(223)
         plt.title("Generated Mask")
-        show_spec(S["mask"]["vocals"])
+        show_spec(S["mask"]["vocals"].astype(np.bool))
 
         plt.subplot(224)
-        plt.title("Applied Mask")
-        show_spec(S["mask"]["vocals"]*S["spec"])
+        plt.title("Target Mask")
+        show_spec(ideal_mask)
 
         plt.tight_layout()
         plt.savefig(fig_path)
         plt.close('all')
+    discordhook.send_files(paths, msg=f"Global Step: {global_step}")
 
 
 def validation_step(device, model, iter_testloader, criterion):
@@ -173,8 +181,8 @@ def validation(device, model, testloader, criterion):
     return avg_loss
 
 def get_learning_rate(global_step, n_iters):
-    if hp.fix_learning_rate:
-        current_lr = hp.fix_learning_rate
+    if hp.lr_schedule_type == 'fixed':
+        current_lr = hp.initial_learning_rate
     elif hp.lr_schedule_type == 'step':
         current_lr = step_learning_rate_decay(hp.initial_learning_rate, 
                     global_step, hp.step_gamma, hp.lr_step_interval)
@@ -189,6 +197,9 @@ def get_learning_rate(global_step, n_iters):
         else:
             x = (max_iters - global_step)/(max_iters - cycle_width)
             current_lr = 0.01*hp.min_lr + 0.99*hp.min_lr*x
+    elif hp.lr_schedule_type == 'cca':
+        current_lr = cyclic_cosine_annealing(hp.min_lr, hp.max_lr,
+                    global_step, hp.nepochs*n_iters, hp.M)
     else:
         current_lr = noam_learning_rate_decay(hp.initial_learning_rate, 
                     global_step, hp.noam_warm_up_steps)
@@ -207,11 +218,12 @@ def train_loop(device, model, trainloader, testloader,  optimizer, checkpoint_di
     while global_epoch < hp.nepochs:
         iter_testloader = iter(testloader)
         running_loss = 0
-        torch.cuda.empty_cache()
         print(f"[Epoch {global_epoch}]")
         for i, (x, y) in enumerate(tqdm(trainloader)):
             model.train()
             x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+
             y_pred = model(x)
             loss = criterion(y_pred, y)
 
@@ -220,11 +232,10 @@ def train_loop(device, model, trainloader, testloader,  optimizer, checkpoint_di
             for param_group in optimizer.param_groups:
                 param_group['lr'] = current_lr
 
-            optimizer.zero_grad()
             loss.backward()
 
             # clip gradient norm
-            nn.utils.clip_grad_norm_(model.parameters(), hp.grad_norm)
+            #nn.utils.clip_grad_norm_(model.parameters(), hp.grad_norm)
             optimizer.step()
 
             train_loss = loss.item()
@@ -241,9 +252,10 @@ def train_loop(device, model, trainloader, testloader,  optimizer, checkpoint_di
             if global_step % hp.send_loss_every_step == 0:
                 discordhook.send_message(f"Step:{global_step}, lr:{current_lr:.6e}, training loss:{train_loss:.6f}, valid loss:{valid_loss:.6f}")
 
-            # save checkpoint
-            if global_step != 0 and global_step % hp.save_every_step == 0:
-                save_checkpoint(device, model, optimizer, global_step, checkpoint_dir, global_epoch)
+            # Evaluation
+            if global_step != 0 and global_step % hp.eval_every_step == 0:
+                with torch.no_grad():
+                    evaluate_model(device, model, eval_dir, checkpoint_dir, global_step)
 
             global_step += 1
 
@@ -255,10 +267,6 @@ def train_loop(device, model, trainloader, testloader,  optimizer, checkpoint_di
         msg = (f"Step:{global_step}, lr:{current_lr:.6e}, avg training loss:{avg_loss:.6f}, avg valid loss:{avg_valid_loss:.6f}")
         discordhook.send_message(msg)
 
-        # Evaluation
-        if global_epoch % hp.eval_every_epoch == 0:
-            with torch.no_grad():
-                evaluate_model(device, model, eval_dir, checkpoint_dir, global_epoch)
     
         global_epoch += 1
 
@@ -280,27 +288,36 @@ if __name__=="__main__":
 
     # build model, create optimizer
     model = build_model().to(device)
-    optimizer = AdamW(model.parameters(),
-                           lr=hp.initial_learning_rate, betas=(
-        hp.adam_beta1, hp.adam_beta2),
-        eps=hp.adam_eps, weight_decay=hp.weight_decay,
-        amsgrad=hp.amsgrad)
+    if hp.optimizer == 'adam':
+        optimizer = AdamW(model.parameters(),
+                          lr=hp.initial_learning_rate, betas=(
+                              hp.adam_beta1, hp.adam_beta2),
+                          eps=hp.adam_eps, weight_decay=hp.weight_decay,
+                          amsgrad=hp.amsgrad)
+    else:
+        optimizer = optim.SGD(model.parameters(), 
+                              lr=hp.initial_learning_rate, 
+                              momentum=hp.momentum, 
+                              weight_decay=hp.weight_decay, 
+                              nesterov=hp.nesterov)
 
-    if hp.fix_learning_rate:
-        print("using fixed learning rate of :{}".format(hp.fix_learning_rate))
+    if hp.lr_schedule_type == 'fixed':
+        print("using fixed learning rate of :{}".format(hp.initial_learning_rate))
     elif hp.lr_schedule_type == 'step':
         print("using exponential learning rate decay")
     elif hp.lr_schedule_type == 'noam':
         print("using noam learning rate decay")
     elif hp.lr_schedule_type == 'one-cycle':
         print('using one-cycle learning rate')
+    elif hp.lr_schedule_type == 'cca':
+        print('using cyclic cosine annealing learning rate')
 
     # load checkpoint
     if checkpoint_path is None:
         print("no checkpoint specified as --checkpoint argument, creating new model...")
         
     else:
-        model = load_checkpoint(checkpoint_path, model, optimizer, False)
+        model = load_checkpoint(checkpoint_path, model, optimizer, True)
         print("loading model from checkpoint:{}".format(checkpoint_path))
         # set global_test_step to True so we don't evaluate right when we load in the model
         global_test_step = True
@@ -318,8 +335,8 @@ if __name__=="__main__":
     random.shuffle(testset.metadata)
     if hp.validation_size is not None:
         testset.metadata = testset.metadata[:hp.validation_size]
-    print(f"# Training examples: {len(trainset)}")
-    print(f"# Validation examples: {len(testset)}")
+    print(f"Training examples: {len(trainset)}")
+    print(f"Validation examples: {len(testset)}")
     trainloader = DataLoader(trainset, collate_fn=basic_collate, shuffle=True, num_workers=2, batch_size=hp.batch_size)
     testloader = DataLoader(testset, collate_fn=basic_collate, shuffle=True, num_workers=2, batch_size=hp.test_batch_size)
 
