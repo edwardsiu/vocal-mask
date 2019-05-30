@@ -5,7 +5,6 @@ usage: generate.py [options] <checkpoint-path> <input-wav>
 options:
     --output-dir=<dir>      Directory where to save output wav [default: generated].
     --sr=<sr>               Sample rate of generated waveform
-    --stereo=<stereo>       Enable stereo processing
     -h, --help                  Show this help message and exit
 """
 from docopt import docopt
@@ -49,36 +48,30 @@ def scale_wav(wav):
     return wav/(np.max(np.abs(wav)))
 
 def generate_mono(device, model, path, output_dir, target_sr):
-    wav = load_wav(path)
+    wav = load_wav(path, offset=30, duration=5)
     wav = wav/np.max(np.abs(wav))
-    estimates = model.generate_wav(device, wav)
-    if target_sr != hp.sample_rate:
-        resample(estimates, target_sr)
-    file_id = path.split('/')[-1].split('.')[0]
-    vox_outpath = os.path.join(output_dir, f'{file_id}_vocals.wav')
-    bg_outpath = os.path.join(output_dir, f'{file_id}_accompaniment.wav')
-    save_wav(scale_wav(estimates['vocals']), vox_outpath, sr=target_sr)
-    save_wav(scale_wav(estimates['accompaniment']), bg_outpath, sr=target_sr)
-
-
-def generate_stereo(device, model, path, output_dir, target_sr):
-    wav = load_wav(path, mono=False)
-    wav = wav/np.max(np.abs(wav))
-    wavl = wav[0]
-    wavr = wav[1]
-    estimatesl = model.generate_wav(device, wavl)
-    estimatesr = model.generate_wav(device, wavr)
-    if target_sr != hp.sample_rate:
-        resample(estimatesl, target_sr)
-        resample(estimatesr, target_sr)
-    vox_wav = np.stack([estimatesl['vocals'], estimatesr['vocals']])
-    acc_wav = np.stack([estimatesl['accompaniment'], estimatesr['accompaniment']])
-    file_id = path.split('/')[-1].split('.')[0]
-    vox_outpath = os.path.join(output_dir, f'{file_id}_vocals.wav')
-    bg_outpath = os.path.join(output_dir, f'{file_id}_accompaniment.wav')
-    save_wav(vox_wav, vox_outpath, sr=target_sr)
-    save_wav(acc_wav, bg_outpath, sr=target_sr)
-    
+    S = model.generate_specs(device, wav)
+    Smix = stft(wav)
+    H, P, R = hpss_decompose(Smix)
+    Hmel = scaled_mel_weight(H, hp.power["mix"], True)
+    Pmel = scaled_mel_weight(P, hp.power["mix"], True)
+    Rmel = scaled_mel_weight(R, hp.power["mix"], True)
+    plt.figure()
+    plt.subplot(221)
+    plt.title('Harmonic')
+    show_spec(Hmel)
+    plt.subplot(222)
+    plt.title('Percussive')
+    show_spec(Pmel)
+    plt.subplot(223)
+    plt.title('Residual')
+    show_spec(Rmel)
+    plt.subplot(224)
+    plt.title('Mask')
+    show_spec(S["mask"]["vocals"])
+    plt.tight_layout()
+    plt.show()
+ 
 
 if __name__=="__main__":
     args = docopt(__doc__)
@@ -86,7 +79,6 @@ if __name__=="__main__":
     checkpoint_path = args["<checkpoint-path>"]
     input_path = args["<input-wav>"]
     target_sr = args["--sr"]
-    stereo = args["--stereo"]
 
     if output_dir is None:
         output_dir = 'generated'
@@ -107,7 +99,4 @@ if __name__=="__main__":
     model = load_checkpoint(checkpoint_path, model)
     print("loading model from checkpoint:{}".format(checkpoint_path))
 
-    if stereo is None:
-        generate_mono(device, model, input_path, output_dir, target_sr)
-    else:
-        generate_stereo(device, model, input_path, output_dir, target_sr)
+    generate_mono(device, model, input_path, output_dir, target_sr)
