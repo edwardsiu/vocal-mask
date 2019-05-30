@@ -2,10 +2,13 @@ import numpy as np
 
 import os
 
+from audio import batch_scale_specs
 import torch
 from torch.utils.data import DataLoader, Dataset
 from hparams import hparams as hp
 from tqdm import tqdm
+
+#offset = hp.stft_frames//2
 
 class SpectrogramDataset(Dataset):
     def __init__(self, data_path, spec_info):
@@ -20,20 +23,24 @@ class SpectrogramDataset(Dataset):
         print("Preparing dataset")
         for spec in tqdm(spec_info):
             size = spec[1] - hp.stft_frames
-            fname = spec[0]+".npy"
             for i in range(0, size, hp.stft_stride):
                 j = i + hp.stft_frames
                 slice_info = (spec[0], i, j)
                 metadata.append(slice_info)
+            
         return metadata
 
     def __getitem__(self, index):
         slice_info = self.metadata[index]
-        fname = slice_info[0]+".npy"
+        fname = slice_info[0]
         i = slice_info[1]
         j = slice_info[2]
-        x = np.load(os.path.join(self.mix_path, fname), mmap_mode='r')[:,:,i:j]
-        y = np.load(os.path.join(self.vox_path, fname), mmap_mode='r')[:,i+self.offset]
+        XH = np.load(os.path.join(self.mix_path, fname+"H.npy"), mmap_mode='r')
+        XP = np.load(os.path.join(self.mix_path, fname+"P.npy"), mmap_mode='r')
+        XR = np.load(os.path.join(self.mix_path, fname+"R.npy"), mmap_mode='r')
+        x = np.stack([XH[:,i:j], XP[:,i:j], XR[:,i:j]])
+        Y = np.load(os.path.join(self.vox_path, fname+".npy"), mmap_mode='r')
+        y = Y[:,i+self.offset]
         return x, y
 
     def __len__(self):
@@ -42,11 +49,9 @@ class SpectrogramDataset(Dataset):
 
 def basic_collate(batch):
     x = [it[0] for it in batch]
-    x = np.stack(x).astype(np.float32)
+    x = np.stack(x)
     x = torch.FloatTensor(x)
     y = [it[1] for it in batch]
-    y = np.stack(y)
-    if hp.mask_threshold is not None:
-        y = y > hp.mask_threshold
-    y = torch.FloatTensor(y.astype(np.float32))
+    y = np.stack(y).astype(np.float32)
+    y = torch.FloatTensor(y)
     return x, y
