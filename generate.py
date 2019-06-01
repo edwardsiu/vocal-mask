@@ -72,6 +72,7 @@ def generate_stereo(device, model, path, output_dir, target_sr):
         resample(estimatesl, target_sr)
         resample(estimatesr, target_sr)
     vox_wav = np.stack([estimatesl['vocals'], estimatesr['vocals']])
+    vox_wav = librosa.to_mono(vox_wav)
     acc_wav = np.stack([estimatesl['accompaniment'], estimatesr['accompaniment']])
     file_id = path.split('/')[-1].split('.')[0]
     vox_outpath = os.path.join(output_dir, f'{file_id}_vocals.wav')
@@ -108,6 +109,8 @@ if __name__=="__main__":
     print("loading model from checkpoint:{}".format(checkpoint_path))
 
     if stereo is None:
+        print("Generating mono estimates")
         generate_mono(device, model, input_path, output_dir, target_sr)
     else:
+        print("Generating stereo estimates")
         generate_stereo(device, model, input_path, output_dir, target_sr)

@@ -17,7 +17,7 @@ def load_wav(path, mono=True, offset=0.0, duration=None):
 def save_wav(wav, path, sr=None):
     if not sr:
         sr = hparams.sample_rate
-    librosa.output.write_wav(path, wav, sr=sr)
+    librosa.output.write_wav(path, wav, sr=sr, norm=True)
 
 def get_wav_slices(wav, window, stride):
     N = len(wav)

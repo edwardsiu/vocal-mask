@@ -1,6 +1,6 @@
 """Extract vocals from waveform.
 
-usage: generate.py [options] <checkpoint-path> <input-wav>
+usage: generate.py [options] <checkpoint-path> <mix-wav> <vox-wav>
 
 options:
     --output-dir=<dir>      Directory where to save output wav [default: generated].
@@ -47,28 +47,34 @@ def load_checkpoint(path, model):
 def scale_wav(wav):
     return wav/(np.max(np.abs(wav)))
 
-def generate_mono(device, model, path, output_dir, target_sr):
-    wav = load_wav(path, offset=30, duration=5)
-    wav = wav/np.max(np.abs(wav))
+def generate(device, model, path, vox_path, output_dir, target_sr):
+    wav = load_wav(path, offset=30, duration=10)
+    vwav = load_wav(vox_path, offset=30, duration=10)
+    wav = scale_wav(wav)
+    vwav = scale_wav(vwav)
     S = model.generate_specs(device, wav)
     Smix = stft(wav)
-    H, P, R = hpss_decompose(Smix)
-    Hmel = scaled_mel_weight(H, hp.power["mix"], True)
-    Pmel = scaled_mel_weight(P, hp.power["mix"], True)
-    Rmel = scaled_mel_weight(R, hp.power["mix"], True)
-    plt.figure()
+    Svox = stft(vwav)
+    #H, P, R = hpss_decompose(Smix)
+    #Hmel = scaled_mel_weight(H, hp.power["mix"], True)
+    #Pmel = scaled_mel_weight(P, hp.power["mix"], True)
+    #Rmel = scaled_mel_weight(R, hp.power["mix"], True)
+    Mmel = scaled_mel_weight(Smix, hp.power["mix"], True)
+    Vmel = scaled_mel_weight(Svox, hp.power["mix"], True)
+    target_mask = make_vocal_mask(Smix, Svox)
+    plt.figure(figsize=(20,20))
     plt.subplot(221)
-    plt.title('Harmonic')
-    show_spec(Hmel)
+    plt.title('Mixture')
+    show_spec(Mmel)
     plt.subplot(222)
-    plt.title('Percussive')
-    show_spec(Pmel)
+    plt.title('Vocal')
+    show_spec(Vmel)
     plt.subplot(223)
-    plt.title('Residual')
-    show_spec(Rmel)
-    plt.subplot(224)
-    plt.title('Mask')
+    plt.title('Generated Mask')
     show_spec(S["mask"]["vocals"])
+    plt.subplot(224)
+    plt.title('Target Mask')
+    show_spec(target_mask)
     plt.tight_layout()
     plt.show()
  
@@ -77,7 +83,8 @@ if __name__=="__main__":
     args = docopt(__doc__)
     output_dir = args["--output-dir"]
     checkpoint_path = args["<checkpoint-path>"]
-    input_path = args["<input-wav>"]
+    input_path = args["<mix-wav>"]
+    vox_path = args["<vox-wav>"]
     target_sr = args["--sr"]
 
     if output_dir is None:
@@ -99,4 +106,4 @@ if __name__=="__main__":
     model = load_checkpoint(checkpoint_path, model)
     print("loading model from checkpoint:{}".format(checkpoint_path))
 
-    generate_mono(device, model, input_path, output_dir, target_sr)
+    generate(device, model, input_path, vox_path, output_dir, target_sr)
