@@ -49,7 +49,7 @@ class SpectrogramDataset(Dataset):
 
 def basic_collate(batch):
     x = [it[0] for it in batch]
-    x = np.stack(x)
+    x = np.stack(x).astype(np.float32)
     x = torch.FloatTensor(x)
     y = [it[1] for it in batch]
     y = np.stack(y).astype(np.float32)

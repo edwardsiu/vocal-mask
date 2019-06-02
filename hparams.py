@@ -34,7 +34,7 @@ class hparams:
     eval_length = sample_rate*4  # slice size for evaluation samples
     #----------------
     # model parameters
-    model_type='mobilenet'  # convnet or resnet18 or resnet34
+    model_type='mobilenetv2'  # convnet or mobilenet or mobilenetv2
     init_conv_kernel = (7, 3)
     init_conv_stride = (2, 1)
     init_pool_kernel = None

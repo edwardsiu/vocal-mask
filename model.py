@@ -16,26 +16,26 @@ class MobileNet(nn.Module):
         # 513x25
         self.init_conv = Conv3x3(3, 32, F.relu, stride=(2,1))
         # 257x25
-        self.conv1 = DepthConv(32, 64, stride=(2,1))
+        self.conv1 = DepthwiseConv(32, 64, stride=(2,1))
         # 129x25
-        self.conv2 = DepthConv(64, 128, stride=(2,2))
+        self.conv2 = DepthwiseConv(64, 128, stride=(2,2))
         # 65x13
-        self.conv3 = DepthConv(128, 128)
-        self.conv4 = DepthConv(128, 256, stride=(2,1))
+        self.conv3 = DepthwiseConv(128, 128)
+        self.conv4 = DepthwiseConv(128, 256, stride=(2,1))
         # 33x13
-        self.conv5 = DepthConv(256, 256)
-        self.conv6 = DepthConv(256, 512, stride=(2,2))
+        self.conv5 = DepthwiseConv(256, 256)
+        self.conv6 = DepthwiseConv(256, 512, stride=(2,2))
         # 17x7
         self.conv7 = nn.Sequential(
-            DepthConv(512, 512),
-            DepthConv(512, 512),
-            DepthConv(512, 512),
-            DepthConv(512, 512),
-            DepthConv(512, 512)
+            DepthwiseConv(512, 512),
+            DepthwiseConv(512, 512),
+            DepthwiseConv(512, 512),
+            DepthwiseConv(512, 512),
+            DepthwiseConv(512, 512)
         )
-        self.conv8 = DepthConv(512, 1024, stride=(2,2))
+        self.conv8 = DepthwiseConv(512, 1024, stride=(2,2))
         # 9x4
-        self.conv9 = DepthConv(1024, 1024)
+        self.conv9 = DepthwiseConv(1024, 1024)
         self.avg_pool = nn.AdaptiveAvgPool2d((1,1))
         self.fc = nn.Linear(1024, outdims)
 
@@ -53,6 +53,58 @@ class MobileNet(nn.Module):
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
+        return x
+
+class MobileNetv2(nn.Module):
+    def __init__(self, input_dims, output_dims):
+        super().__init__()
+        # 513x25
+        self.init_conv = Conv3x3(3, 32, F.relu, stride=(2,1))
+        # 257x25
+        self.conv1 = BottleneckBlockS1(32, 1, 16)
+        self.conv2 = nn.Sequential(
+                        BottleneckBlockS2(16, 6, 24),
+                        BottleneckBlockS1(24, 6, 24))
+        # 129x13
+        self.conv3 = nn.Sequential(
+                        BottleneckBlockS2(24, 6, 32, keepw=True),
+                        BottleneckBlockS1(32, 6, 32),
+                        BottleneckBlockS1(32, 6, 32))
+        # 65x13
+        self.conv4 = nn.Sequential(
+                        BottleneckBlockS2(32, 6, 64),
+                        BottleneckBlockS1(64, 6, 64),
+                        BottleneckBlockS1(64, 6, 64),
+                        BottleneckBlockS1(64, 6, 64))
+        # 33x7
+        self.conv5 = nn.Sequential(
+                        BottleneckBlockS2(64, 6, 96, keepw=True),
+                        BottleneckBlockS1(96, 6, 96),
+                        BottleneckBlockS1(96, 6, 96))
+        # 17x7
+        self.conv6 = nn.Sequential(
+                        BottleneckBlockS2(96, 6, 160, keepw=True),
+                        BottleneckBlockS1(160, 6, 160),
+                        BottleneckBlockS1(160, 6, 160))
+        # 9x7
+        self.conv7 = BottleneckBlockS1(160, 6, 320)
+        self.conv8 = Conv1x1(320, 1280, F.relu6)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1,1))
+        self.conv9 = nn.Conv2d(1280, output_dims, kernel_size=1, padding=0)
+
+    def forward(self, x):
+        x = self.init_conv(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
+        x = self.conv6(x)
+        x = self.conv7(x)
+        x = self.conv8(x)
+        x = self.avg_pool(x)
+        x = self.conv9(x)
+        x = x.view(x.size(0), -1)
         return x
 
 class ConvNet(nn.Module):
@@ -88,81 +140,6 @@ class ConvNet(nn.Module):
         x = self.fc2(x)
         return x
 
-class ResNet(nn.Module):
-    def __init__(self, input_dims, output_dims, res_dims):
-        super().__init__()
-        block = PreActResBlock
-        in_filters = res_dims[0][0]
-        out_filters = res_dims[-1][1]
-        init_padding = calc_padding(hp.init_conv_kernel)
-        self.conv_in = nn.Conv2d(1, 
-                                 in_filters, 
-                                 kernel_size=hp.init_conv_kernel, 
-                                 padding=init_padding, 
-                                 stride=hp.init_conv_stride, 
-                                 bias=False)
-        if hp.init_pool_kernel is None:
-            self.maxpool = None
-        else:
-            self.maxpool = nn.MaxPool2d(kernel_size=hp.init_pool_kernel, stride=hp.init_pool_stride)
-        self.resnet_layers = self._build_layers(res_dims, block)
-        self.bn = nn.BatchNorm2d(out_filters)
-        self.relu = nn.ReLU(inplace=True)
-        self.avg_pool = nn.AdaptiveAvgPool2d((1,1))
-        self.fc = nn.Linear(out_filters, output_dims)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def _build_layers(self, res_dims, block):
-        layers = [block(*dim, hp.kernel) for dim in res_dims]
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv_in(x)
-        if self.maxpool is not None:
-            x = self.maxpool(x)
-        x = self.resnet_layers(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        x = self.avg_pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return x
-
-class ResNet18(nn.Module):
-    def __init__(self, input_dims, output_dims):
-        super().__init__()
-        res_dims = [
-            (64, 64), (64, 64), (64, 128),
-            (128, 128), (128, 128), (128, 256),
-            (256, 256), (256, 256), (256, 512),
-            (512, 512), (512, 512)
-        ]
-        self.resnet = ResNet(input_dims, output_dims, res_dims)
-
-    def forward(self, x):
-        return self.resnet(x)
-
-class ResNet34(nn.Module):
-    def __init__(self, input_dims, output_dims):
-        super().__init__()
-        res_dims = [
-            (64, 64), (64, 64), (64, 64), (64, 128),
-            (128, 128), (128, 128), (128, 128), (128, 128), (128, 256),
-            (256, 256), (256, 256), (256, 256), (256, 256), (256, 256),
-                (256, 256), (256, 512),
-            (512, 512), (512, 512), (512, 512)
-        ]
-        self.resnet = ResNet(input_dims, output_dims, res_dims)
-
-    def forward(self, x):
-        return self.resnet(x)
-
 class Model(nn.Module):
     def __init__(self, input_dims, output_dims, model_type):
         super().__init__()
@@ -170,10 +147,8 @@ class Model(nn.Module):
             self.cnn = ConvNet(input_dims, output_dims)
         elif model_type=='mobilenet':
             self.cnn = MobileNet(input_dims, output_dims)
-        elif model_type=='resnet18':
-            self.cnn = ResNet18(input_dims, output_dims)
-        elif model_type=='resnet34':
-            self.cnn = ResNet34(input_dims, output_dims)
+        elif model_type=='mobilenetv2':
+            self.cnn = MobileNetv2(input_dims, output_dims)
         self.sigmoid = nn.Sigmoid()
         num_params(self)
     
