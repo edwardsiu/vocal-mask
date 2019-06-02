@@ -15,7 +15,8 @@ acapellas_dir = "acapellas"
 unprocessed_dir = "unprocessed"
 output_dir = "stems"
 sample_rate = 44100
-window = sample_rate*10
+win_offset = sample_rate*30
+window = sample_rate*15
 scan_range = sample_rate*30
 
 def get_file_name(path):
@@ -39,17 +40,25 @@ def slice_onset(wav):
     return wav[:,onsets[0]:]
 
 def compare_signals(x, y):
-    return np.sum(x[0,:window]*y[0,:window])
+    return np.sum(x[0,win_offset:win_offset+window]*y[0,win_offset:win_offset+window])
 
 def correlate_signals(mixture_path, vocal_path, outpath):
     mwav = load_wav(mixture_path)
     mwav = slice_onset(mwav)
     vwav = load_wav(vocal_path)
     vwav = slice_onset(vwav)
+    fine_win = sample_rate//10
     
+    offsets_coarse = [i for i in range(0, scan_range, 10)]
     corrs = np.array([compare_signals(mwav[:,i:], vwav) 
-                      for i in tqdm(range(scan_range))])
-    sync_point = np.where(corrs == np.max(corrs))[0][0]
+                      for i in tqdm(offsets_coarse)])
+    sync_point = offsets_coarse[np.where(corrs == np.max(corrs))[0][0]]
+    fine_start = max(sync_point-fine_win, 0)
+    fine_end = min(sync_point+fine_win, mwav.shape[-1])
+    offsets_fine = [i for i in range(fine_start, fine_end)]
+    corrs = np.array([compare_signals(mwav[:,i:], vwav)
+                      for i in tqdm(offsets_fine)])
+    sync_point = offsets_fine[np.where(corrs == np.max(corrs))[0][0]]
     mwav = mwav[:,sync_point:]
     if mwav.shape[1] > vwav.shape[1]:
         mwav = mwav[:,:vwav.shape[1]]
@@ -86,26 +95,6 @@ def download_mixtures(acapellas):
         download_mixture(search_key, mixture_path)
         time.sleep(0.1)
 
-def process_multi(num_workers):
-    stems = os.listdir(unprocessed_dir)
-    with Manager() as manager:
-        processes = []
-        for stem in tqdm(stems):
-            if len(processes) >= num_workers:
-                for p in processes:
-                    p.join()
-                processes = []
-            outpath = os.path.join(output_dir, stem)
-            os.makedirs(outpath, exist_ok=True)
-            mixture_path = os.path.join(unprocessed_dir, stem, "mixture.wav")
-            vocal_path = os.path.join(unprocessed_dir, stem, "vocals.wav")
-            p = Process(target=correlate_signals, args=(mixture_path, vocal_path, outpath))
-            p.start()
-            processes.append(p)
-        if len(processes) > 0:
-            for p in processes:
-                p.join()
-
 def synchronize():
     stems = os.listdir(unprocessed_dir)
     for stem in stems:
@@ -113,7 +102,10 @@ def synchronize():
         os.makedirs(outpath, exist_ok=True)
         mixture_path = os.path.join(unprocessed_dir, stem, "mixture.wav")
         vocal_path = os.path.join(unprocessed_dir, stem, "vocals.wav")
-        correlate_signals(mixture_path, vocal_path, outpath)
+        try:
+            correlate_signals(mixture_path, vocal_path, outpath)
+        except Exception as e:
+            print(f"Error encountered while processing {stem}")
 
 def setup():
     os.makedirs(unprocessed_dir, exist_ok=True)
