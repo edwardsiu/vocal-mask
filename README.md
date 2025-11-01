@@ -107,6 +107,24 @@ Audio examples were taken from [here](http://jordipons.me/apps/end-to-end-music-
 | [Sample 4](https://drive.google.com/open?id=1l8wmEc_6yd32VPUYDYOUFZINqtK-Eif4) | [Sample 4](https://drive.google.com/open?id=1BZJDfQWgqJs_s-QWoU0DM4Ma1JZKPBYL) | [Sample 4](https://drive.google.com/open?id=1etJQe4R3lo47nV4GhgXOyBlsUGVLcw0c) | [Sample 4](https://drive.google.com/open?id=1VLeJeTYozQCGRNgQwAU_XJJLvLwG7-U_) | [Sample 4](https://drive.google.com/open?id=1sok6Pd3MweEw0LDJ8TWG8CxprxPr6pia) |
 | [Sample 5](https://drive.google.com/open?id=1wHpW9AxXDg-BZMyxc4XndCHDgkZ5zaL7) | [Sample 5](https://drive.google.com/open?id=1ENCfiPg--AAF3cDRgN9_ebRR4v-W_QYF) | [Sample 5](https://drive.google.com/open?id=19bQGqkKEbHjYrQ-_VB0TqaSORVmu1xGu) | [Sample 5](https://drive.google.com/open?id=1nyQ-GnhT1oBx7p72vveSxoXBqe3UQQ4S) | [Sample 5](https://drive.google.com/open?id=1Nr1oCb2NE0qZepbkBpJ6oR_6fDxbGvqW) |
 
+Additional audio examples demonstrating vocal and accompaniment separation using vocal mask.
+#### Sample 1 Vocals
+https://github.com/user-attachments/assets/b12b8f24-a404-4db7-8b8f-ef9044ac895f
+
+#### Sample 1 Accompaniment
+https://github.com/user-attachments/assets/1c4c2afb-5914-49f4-8d40-6362e93fc699
+
+#### Sample 2 Vocals
+https://github.com/user-attachments/assets/66f58830-cc7e-4b1a-86ac-01e9588a787b
+
+#### Sample 2 Accompaniment
+https://github.com/user-attachments/assets/27a2a5c3-8d55-4617-a4c2-249fe67d96ef
+
+#### Sample 3 Vocals
+https://github.com/user-attachments/assets/c3c1a7d1-cb2b-45e0-90c1-a4d37955d3ee
+
+#### Sample 3 Accompaniment
+https://github.com/user-attachments/assets/4ec8c4c9-562f-4bdc-ad31-355123efcd7f
 
 ### Spectrogram Comparisons  
 Note: Estimates and Ground Truth samples were downsampled to 16kHz to make a fair comparison.
